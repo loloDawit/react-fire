@@ -1,49 +1,47 @@
 const functions = require('firebase-functions');
-const admin = require('firebase-admin')
+const app = require('express')();
+//const { FireBaseAuth } = require ('./util/FireBaseAuth');
+const { getAllScreams, postOneScream } = require('./handlers/screams');
+const { signup, signin}  = require('./handlers/users');
+const { admin, db } = require('./util/admin')
 
-admin.initializeApp();
-
-const express = require('express');
-const app = express();
-
-app.get('/screams', (req, res) => {
+const FireBaseAuth = (req, res, next) => {
+    let idtoken
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+        idtoken = req.headers.authorization.split('Bearer ')[1]; // get the token 
+    } else {
+        console.error('No token found');
+        return res.status(403).json({
+            error: 'Unauthorized'
+        })
+    }
+    // we have token, but check if it;s not random token
     admin
-        .firestore()
-        .collection('screams')
-        .orderBy('createdAt', 'desc')
-        .get()
-        .then(data => {
-            let screams = [];
-            data.forEach(doc => {
-                screams.push({
-                    screamId: doc.id,
-                    body: doc.data().body,
-                    userHandle: doc.data().userHandle,
-                    createdAt: doc.data().createdAt
-                })
-            });
-            return res.json(screams);
+        .auth().
+        verifyIdToken(idtoken)
+        .then(decodedToken => {
+            console.log(decodedToken);
+            req.user = decodedToken;
+            // since we dont store additional data in auth, reach out db and get the 
+            // user handle 
+            return db
+                .collection('users')
+                .where('userId', '==', req.user.uid)
+                .limit(1)
+                .get();
+        }).then(data => {
+            req.user.handle = data.docs[0].data().handle;
+            return next();
         }).catch(err => {
-            console.log(err);
+            console.error('Error while verifying token', err);
+            return res.status(403).json(err)
         })
-})
-
-app.post('/scream', (req, res) => {
-    const newScream = {
-        body: req.body.body,
-        userHandle: req.body.userHandle,
-        createdAt: new Date().toISOString()
-    };
-    admin.firestore().collection('screams').add(newScream).then(doc => {
-        res.json({
-            message: `document ${doc.id} created successfully`
-        });
-    }).catch(err => {
-        res.status(500).json({
-            error: 'something went wrong'
-        })
-        console.log(err);
-    })
-})
-
+}
+/** Scream Route */
+app.get('/screams', getAllScreams);
+app.post('/scream', FireBaseAuth, postOneScream);
+/** User Route  */
+app.post('/signup', signup);
+app.post('/login', signin);
+app.post('user/image',uploadImage)
 exports.api = functions.https.onRequest(app);
